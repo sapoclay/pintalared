@@ -75,6 +75,15 @@ def cargar_vecinos(nombre_interfaz: str) -> dict[str, dict[str, str | None]]:
     return vecinos
 
 
+def _normalizar_mac_vecino(mac: str | None) -> str | None:
+    if not mac:
+        return None
+    mac_normalizada = mac.replace("-", ":").strip().lower()
+    if mac_normalizada == "00:00:00:00:00:00":
+        return None
+    return mac_normalizada
+
+
 def cargar_vecinos_windows(nombre_interfaz: str) -> dict[str, dict[str, str | None]]:
     """Consulta la caché ARP de Windows para una interfaz concreta."""
     interfaz_escapada = nombre_interfaz.replace("'", "''")
@@ -84,7 +93,7 @@ def cargar_vecinos_windows(nombre_interfaz: str) -> dict[str, dict[str, str | No
         [PSCustomObject]@{{
           IP = $_.IPAddress
           MAC = $_.LinkLayerAddress
-          Estado = $_.State
+                    Estado = $_.State.ToString()
         }}
       }} |
       ConvertTo-Json -Depth 3
@@ -98,10 +107,14 @@ def cargar_vecinos_windows(nombre_interfaz: str) -> dict[str, dict[str, str | No
         ip = str(entrada.get("IP") or "")
         if not ip or not _es_ipv4(ip):
             continue
-        mac = (entrada.get("MAC") or "").replace("-", ":") or None
+        mac = _normalizar_mac_vecino(str(entrada.get("MAC") or ""))
+        estado_valor = entrada.get("Estado")
+        estado = str(estado_valor).strip() if estado_valor is not None else "UNKNOWN"
+        if estado.upper() in {"UNREACHABLE", "INCOMPLETE", "FAILED"} and mac is None:
+            continue
         vecinos[ip] = {
-            "mac": mac.lower() if mac else None,
-            "state": str(entrada.get("Estado") or "UNKNOWN"),
+            "mac": mac,
+            "state": estado,
         }
     return vecinos
 
@@ -119,7 +132,7 @@ def _resolver_hostname_por_sistema(ip: str) -> str | None:
     """Agota métodos del sistema para recuperar un nombre cuando no hay PTR utilizable."""
     if es_windows():
         try:
-            salida = ejecutar_comando(["ping", "-a", "-n", "1", "-w", "400", ip])
+            salida = ejecutar_comando(["ping", "-a", "-n", "1", "-w", "400", ip], timeout=1.0)
         except Exception:
             return None
         primera_linea = next((linea.strip() for linea in salida.splitlines() if linea.strip()), "")
@@ -143,6 +156,12 @@ def _resolver_hostname_por_sistema(ip: str) -> str | None:
 
 def resolver_nombre_host(ip: str) -> tuple[str | None, str | None]:
     """Intenta recuperar un hostname usando varios métodos y devuelve también su origen."""
+    if es_windows():
+        nombre_sistema = _resolver_hostname_por_sistema(ip)
+        if nombre_sistema:
+            return nombre_sistema, "resolución auxiliar del sistema"
+        return None, None
+
     nombre_dns = resolver_dns_inverso(ip)
     if nombre_dns:
         return nombre_dns, "DNS inverso"

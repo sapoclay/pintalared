@@ -58,9 +58,12 @@ def asegurar_entorno_compatible() -> None:
     raise SystemExit("PintalaRED solo es compatible actualmente con Linux y Windows.")
 
 
-def ejecutar_comando(command: list[str]) -> str:
+def ejecutar_comando(command: list[str], timeout: float | None = None) -> str:
     """Ejecuta un comando del sistema y devuelve su salida estándar."""
-    process = subprocess.run(command, capture_output=True, text=True, check=False)
+    try:
+        process = subprocess.run(command, capture_output=True, text=True, check=False, timeout=timeout)
+    except subprocess.TimeoutExpired as error:
+        raise RuntimeError(f"Tiempo de espera agotado al ejecutar {' '.join(command)}.") from error
     if process.returncode != 0:
         error = process.stderr.strip() or process.stdout.strip() or "sin detalles"
         raise RuntimeError(f"Fallo al ejecutar {' '.join(command)}: {error}")
@@ -139,14 +142,18 @@ def _ejecutable_powershell() -> str:
     return ejecutable
 
 
-def ejecutar_powershell(script: str) -> str:
+def ejecutar_powershell(script: str, timeout: float | None = None) -> str:
     """Ejecuta un script de PowerShell y devuelve su salida estándar."""
-    proceso = subprocess.run(
-        [_ejecutable_powershell(), "-NoProfile", "-Command", script],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    try:
+        proceso = subprocess.run(
+            [_ejecutable_powershell(), "-NoProfile", "-Command", script],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise RuntimeError("Tiempo de espera agotado al ejecutar PowerShell.") from error
     if proceso.returncode != 0:
         error = proceso.stderr.strip() or proceso.stdout.strip() or "sin detalles"
         raise RuntimeError(f"Fallo al ejecutar PowerShell: {error}")
